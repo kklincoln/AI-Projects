@@ -1,0 +1,9 @@
+//////////////TCHAT 	(terminal chat) chat-based model(not completion based model)
+
+1. ConversationBufferMemory: Stores all of hte messages that we send and get back.
+	a) ChatPromptTemplate>LLM> ConversationBufferMemory(data storage area for list of messages, from the output of the LLM {"human message":"content","AI Message":"text"})
+	b) second loop into the memory will add in additional content and text outputs to the dictionary{"content":"follow up message","messages":[HumanMessage("whatis*"),"AIMessage"]}
+2. add functionality for conversation history;
+	a) when using ConversationMessageHistory (for short conversations), FileChatMessageHistory stores the messages as Json object
+	b) when using ConversationSummaryMemory (for longer conversations), the outputs from the LLM are pssed into a nested chain with a prompt template below, which is then passed into an LLM. Then those outputs are stored back into the ConversationSummaryMemory, as a SystemMessage summary of convo, to be referenced upon when the outer chain is called: 
+	~Progressively summarize the conversation, adding to the previous summary with a new summary: "The user said: {CONTENT},	The AI Replied {TEXT}"

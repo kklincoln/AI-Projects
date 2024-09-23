@@ -1,0 +1,1 @@
+This project simply outlines the process of calling multiple llm chains in a program as well as the necessary inputs and outputs associated with the process
