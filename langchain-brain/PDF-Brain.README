@@ -1,0 +1,274 @@
+PDFBrain Readme:
+
+##------------------------------------------------------------------------------##
+##-------------------------------PROBLEM----------------------------------------##
+##------------------------------------------------------------------------------##
+
+There is a pdf document containing the knowledge we need to reference, but we don't have the time or 
+resources to be able to search through the pdf to find the answer. 
+
+
+
+##------------------------------------------------------------------------------##
+##-------------------------------POSSIBLE SOLUTIONS-----------------------------##
+##------------------------------------------------------------------------------##
+-A) Copying the full text and prompting ChatGPT:
+	1) We can't copy & paste the entire text from the pdf into CGPT, because then we will get an error due to the length of the message exceeding the capacity. 
+
+	2) Even without the constraints associated with the length of the messages, text models don't tend to do well with lengthy requests. 
+
+	3) The more text we send to ChatGPT, the greater fiancial cost associated with each request.
+
+-B) Parse and store the PDF, then combine with prompt to ChatGPT.
+
+##------------------------------------------------------------------------------##
+##------------------------------SOLUTION----------------------------------------##
+##------------------------------------------------------------------------------##
+
+This program will allow for the user to upload a PDF document. Then a series of processes will be executed prior to sending the information to the ChatGPT server. 
+note: steps 1 and 2 occur instantly at time of PDF upload.
+	1) When a user uploads a PDF, extract the text and divide it into chunks(1000 char).
+	2) An Embedding Creation Algorithm is run across each of the chunks.
+		a)  The Embedding Creation Algorithm takes a string and turns it into an array of numbers 1536 elements long, between -1 and 1. This array essentially represents the raw 'essence' of what the string chunk is talking about. Each element in the array can represent how closely the text analyzed might relate to a specific topic.
+			e.g if the first aray element score represents similarity with 'food': if the sentence asked about airplanes the array element would likely be closest to -.99, whereas a sentence asking for a recipe might have the element be 0.9. 
+	3) The algorithm generates a summary of what each chunk is talking about, which are then stored in a vector store(Pinecone).
+	4) Later, when a user asks a question, the same Embedding Creation Algorithm is applied to the question to generate the embedding for that specific inquiry. With that embedding, a regression analysis is done against the question alongside the vector store to find the chunk of text *most relevant* to the user's question.
+	5) Once the most relevant chunk of text from the PDF is found, both the chunk and the initial question from the user are sent to ChatGPT. This is essentially providing ChatGPT the correct information alongside the question, so that it responds to the question in the most appropriate way, given the format of the question.
+	6)
+
+
+
+
+##------------------------------------------------------------------------------##
+##------------------------------APPROACH----------------------------------------##
+##------------------------------------------------------------------------------##
+note: all pipenv steps need to be prefixed with py -m
+steps:
+1) User uploads PDF
+2) Open the pdf file, parse text
+3) break the text into chunks
+4) figure out what each chunk is about (generate embeddings)
+5) store results in a database (vectorstore)
+	- PGVector (postgres), Chroma, Pinecone, Redis, Deep Lake, Weaviate
+6) analyze the question sent by the user
+7) find the most relevant chunks using embeddings in vectorstore
+8) format the question and chunk into a prompt template
+9) send to ChatGPT to get a response
+
+
+
+##------------------------------------------------------------------------------##
+##---------------------------IMPLEMENTATION-------------------------------------##
+##------------------------------------------------------------------------------##
+
+#### Obtaining API Key
+1. Open your browser and navigate to https://platform.openai.com/
+
+2. Create an OpenAI account by logging in with an existing provider or by creating an account with your email address.
+
+3. On the top right-hand side, click 'Personal' then 'View API Keys'
+
+
+# take our program, provide inputs(often a dictionary), combine those inputs into a premade prompt (write a short {language} program that will {task}), feed into llm, get the output, feed it into another prompt (make sure this snippet doesn't have any bugs in it {code}, feed it into a new language model, get output
+ PROCESS FLOW: input>prompt>model>output 
+ SHOULD BE ABLE TO SWAP MODELS AND CONNECT PIPELINES EASILY AS WELL
+ CHAIN IS THE FOUNDATION OF EVERYTHING INSIDE LANGCHAIN, IT'S A PYTHON CLASS WRITTEN INSIDE OF LANGCHAIN COMPRISED OF: INPUT > 'PROMPT TEMPLATE' > 'LANGUAGE MODEL' > OUTPUT 
+
+
+
+
+##----------------------------------TCHAT-------------------------------------##
+//////////////(terminal chat) chat-based model(not completion based model)
+
+1. ConversationBufferMemory: Stores all of hte messages that we send and get back.
+	a) ChatPromptTemplate>LLM> ConversationBufferMemory(data storage area for list of messages, from the output of the LLM {"human message":"content","AI Message":"text"})
+	b) second loop into the memory will add in additional content and text outputs to the dictionary{"content":"follow up message","messages":[HumanMessage("whatis*"),"AIMessage"]}
+2. add functionality for conversation history;
+	a) when using ConversationMessageHistory (for short conversations), FileChatMessageHistory stores the messages as Json object
+	b) when using ConversationSummaryMemory (for longer conversations), the outputs from the LLM are pssed into a nested chain with a prompt template below, which is then passed into an LLM. Then those outputs are stored back into the ConversationSummaryMemory, as a SystemMessage summary of convo, to be referenced upon when the outer chain is called: 
+	~Progressively summarize the conversation, adding to the previous summary with a new summary: "The user said: {CONTENT},	The AI Replied {TEXT}"
+
+##----------------------------------FACTS-------------------------------------##
+Adding to the previous concepts:
+
+1. Generate embeddings with models:
+	
+	a)***LOCAL***: ScentenceTransformer(768 dimensions within embedding) uses a set of algorithms that run locally, so it is free to run, but uses a lot of processing power. 
+		-e.g.: all-mpnet-base-v2
+	b)***CGPT*** OpenAI Embeddings(1536 dimensions within embedding) costs money to use, but a smaller amount initially
+	NOTE: These embeddings are not cross-compatible, since the algorithms used are different. Similar to a cypher encryption.
+
+2. Store embeddings in a vector store
+	a) ChromaDB (opensource) uses SQLite and runs locally
+
+3. direct the language model to only answer questions associated with a file 
+
+4. load using document_loader or something like S3FileLoader (amazon s3 buckets which are stores, may have json, txt, pdf, etc.). 
+	a) Context: These documentloaders will let you load a file and return with a 'Document'. The 'Document' inside of langchain is a dictionary that has: 
+	 {"page_content":"...", "metadata":"{"source":"facts.txt"}"}
+
+5. RetrievalQAChain: 
+	combine a chunk of the document with the most similar embeddings (700-1500 different dimensions) within a vector store, with the user question into a PromptTemplate to be sent to ChatGPT
+6. EmbeddingsRedundantFilter: 
+	Considers the possibility of highly similar documents and their respective embeddings. If embeddings are too similar in nature, this method will remove the redundancies and only consider the embeddings with a greater degree of variation. However, there is no way to 'insert this step' of filtration between the RetrievalQA Chain and the chroma retriever. We will need to make our own custom retriever.
+
+
+##--------------------------------AGENTS----------------------------------------------##
+PROCESS FLOW:
+	user:
+		Manager asks a question to the language model: How many open orders are there?
+	our app:
+		merge the user's question with instructions on how to use tool
+	CGPT: 
+		Decides it needs to use a tool to answer the question; uses knowledge of how to access the database to construct a query and send it to the db
+	our app:
+		sees that CGPT wants to use the tool; 
+		SQLITE DB:
+			executes the query
+			returns the query response to our app
+		sends the result from the query to CGPT
+	CGPT:
+		Constructs the response into a sentence and sends it back to the manager
+	User:
+		gets their answer
+
+-What is an agent?:
+	Almost identical to a chain, but an agent:
+		- knows how to use tools	(the only difference)
+		- will take that list of tools and convert them into JSON function descriptions
+		- still has input variables, memory, prompts, etc- same as a normal chain
+
+	#fake implementation#
+		class AgentExecutor:
+			def __call__(self, input)
+				while true:
+					result = self.agent(input)
+
+					if result == RequestToCallATool:
+						call_tool(result)
+					else:
+						return result
+
+	Handlers were built into the on_chat_model_start to display the messages being sent between the system, AI, human, and function calls. This is a supplemental tool that not only aids in debugging process, but also provides additional context that can then be populated into a 'chat window'. 
+				
+
+##-----------------------------PDF------------------------------------------##
+
+PROCESS FLOW: 
+1) USER LOGS IN
+2) USER UPLOADS A PDF
+3) WE GENERATE EMBEDDINGS
+4) USER ASKS QUESTION ABOUT THE PDF
+5) WE FIND RELEVANT DOCUMENTS
+6) PUT QUESTION + DOCS INTO AN LLM
+7) SHOW USER THE OUTPUT
+8) USER CAN LIKE OR DISLIKE THE ANSWER
+
+
+#--------NOTES--------#
+Three different processes are required for this to work, as outlined in the README file. 
+
+1) Python Server: This lets you navigate to the browser page for the project 
+	pipenv shell
+	inv dev 
+2) the worker: 
+	pipenv shell
+	inv devworker
+3)Redis
+	pipenv shell
+	flask --app app.web init-db
+
+
+
+#---------File Structure-----------#
+## .venv
+	- dependencies and project configuration
+## app
+	-celery: Config for the 'worker'
+	-chat: this will call 4 functions provided by app.web in the api.py file
+	NOTE: can use the app.chat code that we write and use it in a different project as long as we use all the code with another module (sub app.web) that provides the four functions nested under app.chat, we can use this code for future projects
+		-(the four below are a part of app.web not app.chat)
+		- get_messages_by_conversation_id()
+		- add_message_to_conversation()
+		- get_conversation_components()
+		- set_conversation_components() 
+	-web: server code: functions to handle requests, database access, etc. The web module calls 4 functions from the app.chat module implementation. 
+		- build_chat()
+		- create_embeddings_for_pdf()
+		- score_conversation()
+		- get_scores()
+## client:
+	- All the HTML, JS, styling that shows in the browser
+## tasks.py
+	- defines some shortcut commands to run the server (like "inv dev")
+
+
+
+##----------------------PROCESS FLOW DETAILS---------------------------------------#
+
+PROCESS FLOW: 
+1) USER LOGS IN
+2) USER UPLOADS A PDF
+	- Save to server's hard drive, within a temp directory, and at the same time the pdf is given a randomly generated identifier (id field).
+3) WE GENERATE EMBEDDINGS
+	-  Then our server, having recognized that this pdf was uploaded, will need to separate the pdf into chunks, create embeddings and store them inside a vector store. 
+	- the server will call the app.chat create_embeddings_for_pdf() function
+	- the server (or web module code) is going to provide two arguments that we need in order to call this function: pdf_id and pdf_path from step 2
+		- it will involve some code that extracts text from pdf with a 'loader'
+		- then create a TextSplitter that will split it into chunks
+		- use loader and splitter to split the pdf into chunks, called documents
+		- we will then update the documents metadata
+		- add the documents to a vector store, and embeddings are created for each document
+			- vector store for this project is pinecone.io 
+			- sign up, create index + api key, add env variables to .env file, install pinecone client, create client and wrap with langchain
+				- create a new index
+					- dimensions: 1536 (open AI generated embeddings lenght)
+					- metric
+				- use LangChain pinecone wrapper to be able to use the features of Pinecone
+					- create an embeddings object that allows the wrapper to receive a list of docs, turn them into embeddings and store them inside an index using pinecone client
+
+	- the python server creates a job, e.g. 'please generate embeddings for *.pdf',
+		- it sends that to a message broker (we are using redis),
+		- that will relay the message to the worker (a separate python program that can be 'called' to to the jobs that are requested). This process will allow for scaling in the future, i.e. if multiple python servers are pushing multiple jobs, the redis server can distribute the jobs to available workers 
+4) USER ASKS QUESTION ABOUT THE PDF
+5) WE FIND RELEVANT DOCUMENTS
+6) PUT QUESTION + DOCS INTO AN LLM
+7) SHOW USER THE OUTPUT
+8) USER CAN LIKE OR DISLIKE THE ANSWER
+
+
+
+
+
+
+
+
+
+---Running File Upload Server Locally
+The PDF project relies upon a file-upload server that I created for this course.
+If you have any trouble accessing the file-upload server, you can run it locally on your computer instead.
+
+Setup
+
+Download the attached local-do-files.zip and extract it anywhere on your computer where you typically do development. Do not place these files inside of your current pdf project. They need to be a separate directory and will be run as a separate application.
+
+Using your terminal, change into the local-do-files directory.
+
+Run pipenv shell, then, pipenv install
+The above commands assume that you have already installed Pipenv, something that we've been using throughout the course up until this point. After doing this, your terminal will now be running commands in the new environment managed by Pipenv.
+
+Once inside the Pipenv shell, start the server with python app.py
+
+Important - Do not attempt to access localhost:8050 in your browser as this will just result in a Not Found error. The app only contains upload and download routes that will be used by the pdf project.
+
+In a separate terminal window, change into your existing pdf project directory.
+
+Find the pdf project's .env file and change the UPLOAD_URL line to the following: UPLOAD_URL=http://localhost:8050
+
+Make sure that you fully exit your pdf project's virtual environment.
+
+Restart the pdf project's shell by running pipenv shell. If you are running on a *nix system, you can use the source .env command to refresh the environment variables without exiting and restarting the Pipenv environment.
+
+Restart the pdf application by running inv dev.
+
+
